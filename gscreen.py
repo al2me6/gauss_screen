@@ -318,12 +318,18 @@ class DataDirectory:
         for subdir in self.dirs:
             subdir._scan_recurse(executor, holder)
 
-    def _prune_empty(self):
+    def _contains_job_recurse(self) -> bool:
+        if self.jobs:
+            return True
         for dir_ in self.dirs:
-            if not dir_.dirs and not dir_.jobs:
-                del dir_
-            else:
-                dir_._prune_empty()
+            if dir_._contains_job_recurse():
+                return True
+        return False
+
+    def _prune_empty(self):
+        for (i, dir_) in enumerate(self.dirs):
+            if not dir_._contains_job_recurse():
+                del self.dirs[i]
 
     def __str__(self) -> str:
         ret = f"{self.path.name}\n"
