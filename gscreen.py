@@ -101,12 +101,8 @@ def try_parse_functional_basis(keyword: str) -> tuple[str, str | None] | None:
 
 RE_SCRF_SOLVENT = re.compile(r"Solvent=([^,)]+)", re.IGNORECASE)
 RE_CHARGE_MULT = re.compile(r"^ Charge =\s+(-?\d+) Multiplicity = (\d+)$")
-RE_ATOM_POSITION = re.compile(
-    r"^ ([A-Za-z]{1,2})\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+) $"
-)
-RE_IR_FREQ = re.compile(
-    r"^ Frequencies --\s+(-?\d+\.\d+)(?:\s+(-?\d+\.\d+))?(?:\s+(-?\d+\.\d+))?$"
-)
+RE_ATOM_POSITION = re.compile(r"^ ([A-Za-z]{1,2})\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+) $")
+RE_IR_FREQ = re.compile(r"^ Frequencies --\s+(-?\d+\.\d+)(?:\s+(-?\d+\.\d+))?(?:\s+(-?\d+\.\d+))?$")
 RE_FREE_ENERGY = re.compile(r"^ Sum of electronic and thermal Free Energies= \s+(-\d+\.\d+)$")
 
 
@@ -327,9 +323,11 @@ class DataDirectory:
         return False
 
     def _prune_empty(self):
-        for (i, dir_) in enumerate(self.dirs):
+        for i, dir_ in enumerate(self.dirs):
             if not dir_._contains_job_recurse():
                 del self.dirs[i]
+            else:
+                dir_._prune_empty()
 
     def __str__(self) -> str:
         ret = f"{self.path.name}\n"
