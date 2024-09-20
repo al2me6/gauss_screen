@@ -80,6 +80,7 @@ class MolecularFormula:
 
 class LogParseState(Enum):
     SearchRoute = auto()
+    ReadRoute = auto()
     SearchStructure = auto()
     ReadChargeMult = auto()
     ReadFormula = auto()
@@ -162,8 +163,9 @@ class GaussianJob:
     charge: int = 0
     mult: int = 1  # 2S+1
     formula: MolecularFormula = dataclasses.field(default_factory=MolecularFormula)
-    functional: str = ""
-    basis: str = ""
+    route: str = ""
+    functional: str | None = None
+    basis: str | None = None
     solvent: str | None = None
     num_imag_freq: int = 0
     # electronic_energy_au = 0  # TODO
@@ -190,21 +192,24 @@ class GaussianJob:
 
                 match state:
                     case LogParseState.SearchRoute:
-                        if not line.startswith(" #"):
-                            continue
-                        keywords = line.removeprefix(" #").split()
-                        for kw in keywords:
-                            kw_lower = kw.lower()
-                            if kw_lower == "genecp":
-                                self.basis = kw
-                            elif kw_lower.startswith("scrf"):
-                                if match := RE_SCRF_SOLVENT.search(kw):
-                                    self.solvent = match.group(1)
-                            elif f_b := try_parse_functional_basis(kw):
-                                self.functional = f_b[0]
-                                if f_b[1]:
-                                    self.basis = f_b[1]
-                        state = LogParseState.SearchStructure
+                        if line.startswith(" #"):
+                            self.route = line.removeprefix(" #").strip()
+                            state = LogParseState.ReadRoute
+                    case LogParseState.ReadRoute:
+                        if set(line.strip()) != {"-"}:
+                            self.route += line.strip()
+                        else:
+                            keywords = self.route.split()
+                            for kw in keywords:
+                                kw_lower = kw.lower().strip()
+                                if kw_lower == "genecp":
+                                    self.basis = kw
+                                elif kw_lower.startswith("scrf"):
+                                    if match := RE_SCRF_SOLVENT.search(kw):
+                                        self.solvent = match.group(1)
+                                elif f_b := try_parse_functional_basis(kw):
+                                    (self.functional, self.basis) = f_b
+                            state = LogParseState.SearchStructure
                     case LogParseState.SearchStructure:
                         if line == " Symbolic Z-matrix:":
                             state = LogParseState.ReadChargeMult
@@ -262,7 +267,7 @@ class GaussianJob:
             case Column.Solvent:
                 return f"{self.solvent}"
             case Column.Theory:
-                return f"{self.functional}/{self.basis}"
+                return f"{self.functional or "unknown"}/{self.basis or "unknown"}"
             case Column.Success:
                 return f"{self.success}"
             case Column.ImagFreq:
