@@ -110,6 +110,9 @@ def hartree_to_kj_per_mol(au: float) -> float:
     return au * 2625.499639
 
 
+KJ_TO_KCAL = 0.238_845
+
+
 @enum.verify(enum.EnumCheck.CONTINUOUS)
 class Column(IntEnum):
     Name = 0
@@ -122,6 +125,7 @@ class Column(IntEnum):
     ImagFreq = auto()
     GHartree = auto()
     GkJPerMol = auto()
+    GkcalPerMol = auto()
 
     def __str__(self):
         match self:
@@ -145,6 +149,8 @@ class Column(IntEnum):
                 return "G(au)"
             case self.GkJPerMol:
                 return "G(kJ/mol)"
+            case self.GkcalPerMol:
+                return "G(kcal/mol)"
 
 
 COLUMNS = [c for c in Column]
@@ -237,7 +243,11 @@ class GaussianJob:
         self.__dict__.update(other.__dict__)
 
     def __str__(self) -> str:
-        return f"GaussianJob({self.formula}({self.charge:+}, 2S+1={self.mult}), {self.functional}/{self.basis}, Solvent={self.solvent}, G={self.free_energy_au:.4f}au)"
+        return (
+            f"GaussianJob({self.formula}({self.charge:+}, 2S+1={self.mult}), "
+            f"{self.functional}/{self.basis}, Solvent={self.solvent}, "
+            f"G={self.free_energy_au:.4f}au)"
+        )
 
     def fmt(self, col: Column) -> str:
         match col:
@@ -261,6 +271,8 @@ class GaussianJob:
                 return f"{self.free_energy_au:.6f}"
             case Column.GkJPerMol:
                 return f"{hartree_to_kj_per_mol(self.free_energy_au):.4f}"
+            case Column.GkcalPerMol:
+                return f"{hartree_to_kj_per_mol(self.free_energy_au) * KJ_TO_KCAL:.4f}"
 
 
 @dataclass(frozen=True)
