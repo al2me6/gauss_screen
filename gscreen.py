@@ -296,7 +296,7 @@ class DataDirectory:
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or Path()
-        self.dirs: list[Self] = []
+        self.dirs: list[Self] = []  # type: ignore
         self.jobs: list[GaussianJob] = []
 
     def scan_concurrently(self):
