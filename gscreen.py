@@ -419,6 +419,9 @@ class GaussScreen(QWidget):
         self.browse_path = QPushButton("Browse", self.active_path_box)
         self.browse_path.clicked.connect(self.select_active_path)
         self.active_path_box.layout().addWidget(self.browse_path)
+        self.reload = QPushButton("Reload", self.active_path_box)
+        self.reload.clicked.connect(self.refresh_tree)
+        self.active_path_box.layout().addWidget(self.reload)
         main_layout.addWidget(self.active_path_box)
 
         self.filters_box = QGroupBox("Filters")
@@ -454,6 +457,7 @@ class GaussScreen(QWidget):
         self.directory.path = Path(self.path.text())
         self.refresh_tree()
 
+    @Slot()
     def refresh_tree(self):
         self.directory.scan_concurrently()
         self.directory.rebuild_model(self.model)
