@@ -93,7 +93,8 @@ class LogParseState(Enum):
 
 def try_parse_functional_basis(keyword: str) -> tuple[str, str | None] | None:
     components = keyword.split("/", maxsplit=1)
-    if components[0].lower() in {"m06", "m062x", "b3lyp"}:
+    # This is jank...
+    if components[0].lower() in {"m06", "m062x", "b3lyp", "wb97xd"}:
         if len(components) == 1:
             return components[0], None
         return components[0], components[1]
