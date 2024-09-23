@@ -103,8 +103,8 @@ def try_parse_functional_basis(keyword: str) -> tuple[str, str | None] | None:
 
 RE_SCRF_SOLVENT = re.compile(r"Solvent=([^,)]+)", re.IGNORECASE)
 RE_CHARGE_MULT = re.compile(r"^ Charge =\s+(-?\d+) Multiplicity = (\d+)$")
-RE_ATOM_POSITION = re.compile(r"^ ([A-Za-z]{1,2})\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+) $")
-RE_IR_FREQ = re.compile(r"^ Frequencies --\s+(-?\d+\.\d+)(?:\s+(-?\d+\.\d+))?(?:\s+(-?\d+\.\d+))?$")
+RE_ATOM_POSITION = re.compile(r"^ ([A-Za-z]{1,2})\s+(-?\d+\.\d*)\s+(-?\d+\.\d*)\s+(-?\d+\.\d*) $")
+RE_IR_FREQ = re.compile(r"^ Frequencies --\s+(-?\d+\.\d*)(?:\s+(-?\d+\.\d*))?(?:\s+(-?\d+\.\d*))?$")
 RE_FREE_ENERGY = re.compile(r"^ Sum of electronic and thermal Free Energies= \s+(-\d+\.\d+)$")
 
 
@@ -198,7 +198,8 @@ class GaussianJob:
                             state = LogParseState.ReadRoute
                     case LogParseState.ReadRoute:
                         if set(line.strip()) != {"-"}:
-                            self.route += line.strip()
+                            # Remove only the first character, which is always a space.
+                            self.route += line[1:]
                         else:
                             keywords = self.route.split()
                             for kw in keywords:
