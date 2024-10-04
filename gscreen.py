@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-# spell-checker:ignore PTABLE scrf genecp
+# spell-checker:ignore PTABLE scrf genecp Gkcal
 
 import concurrent.futures
 import dataclasses
@@ -18,7 +18,7 @@ from enum import Enum, IntEnum, auto
 from pathlib import Path
 from typing import Self
 
-from PySide6.QtCore import QDir, Slot
+from PySide6.QtCore import QDir, QModelIndex, QObject, Qt, Slot
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QApplication,
@@ -128,6 +128,7 @@ class Column(IntEnum):
     GHartree = auto()
     GkJPerMol = auto()
     GkcalPerMol = auto()
+    Reference = auto()
 
     def __str__(self):
         match self:
@@ -153,9 +154,12 @@ class Column(IntEnum):
                 return "G(kJ/mol)"
             case self.GkcalPerMol:
                 return "G(kcal/mol)"
+            case self.Reference:
+                return "Ref"
 
 
 COLUMNS = [c for c in Column]
+assert COLUMNS[0] == Column.Name
 
 
 @dataclass
@@ -256,7 +260,7 @@ class GaussianJob:
             f"G={self.free_energy_au:.4f}au)"
         )
 
-    def fmt(self, col: Column) -> str:
+    def fmt(self, col: Column, ref_g_au: float = 0.0) -> bool | str:
         match col:
             case Column.Name:
                 return self.path.stem
@@ -275,11 +279,13 @@ class GaussianJob:
             case Column.ImagFreq:
                 return f"{self.num_imag_freq}"
             case Column.GHartree:
-                return f"{self.free_energy_au:.6f}"
+                return f"{self.free_energy_au - ref_g_au:+.6f}"
             case Column.GkJPerMol:
-                return f"{hartree_to_kj_per_mol(self.free_energy_au):.4f}"
+                return f"{hartree_to_kj_per_mol(self.free_energy_au - ref_g_au):+.4f}"
             case Column.GkcalPerMol:
-                return f"{hartree_to_kj_per_mol(self.free_energy_au) * KJ_TO_KCAL:.4f}"
+                return f"{hartree_to_kj_per_mol(self.free_energy_au - ref_g_au) * KJ_TO_KCAL:+.4f}"
+            case Column.Reference:
+                return False
 
 
 @dataclass(frozen=True)
@@ -362,13 +368,13 @@ class DataDirectory:
     def len_recurse(self) -> int:
         return len(self.jobs) + sum(dir_.len_recurse() for dir_ in self.dirs)
 
-    def dir_row_(self) -> list[QStandardItem]:
+    def _dir_row(self) -> list[QStandardItem]:
         name = QStandardItem(self.path.name)
         name.setIcon(self._ICON_PROVIDER.icon(QFileIconProvider.IconType.Folder))
         name.setEditable(False)
         return [name]
 
-    def job_row_(self, idx: int) -> list[QStandardItem]:
+    def _job_row(self, idx: int) -> tuple[GaussianJob, list[QStandardItem]]:
         job = self.jobs[idx]
 
         row = [QStandardItem(job.fmt(col)) for col in COLUMNS]
@@ -376,33 +382,68 @@ class DataDirectory:
             item.setEditable(False)
 
         row[Column.Name].setIcon(self._ICON_PROVIDER.icon(QFileIconProvider.IconType.File))
+        row[Column.Reference].setCheckable(True)
 
-        return row
+        return job, row
 
-    def collapsed_row_(self) -> list[QStandardItem]:
-        row = self.job_row_(0)
-        name = QStandardItem(self.path.name)
-        name.setEditable(False)
-        name.setIcon(self._ICON_PROVIDER.icon(QFileIconProvider.IconType.File))
-        row[Column.Name] = name
-        return row
-
-    def build_model_recurse_(self, parent: QStandardItem):
-        this_row = self.collapsed_row_() if self.collapsible() else self.dir_row_()
-        this_dir = this_row[Column.Name]
-
-        parent.appendRow(this_row)
-
-        if not self.collapsible():
+    def build_model_recurse(
+        self, parent: QStandardItem, checkbox_to_job: dict[QModelIndex, GaussianJob]
+    ):
+        if self.collapsible():
+            job, row = self._job_row(0)
+            row[Column.Name].setText(self.path.name)
+            row[Column.Name].setIcon(self._ICON_PROVIDER.icon(QFileIconProvider.IconType.File))
+            parent.appendRow(row)
+            checkbox_to_job[row[Column.Reference].index()] = job
+        else:
+            this_row = self._dir_row()
+            parent.appendRow(this_row)
+            this_dir = this_row[Column.Name]
             for dir_ in self.dirs:
-                dir_.build_model_recurse_(this_dir)
+                dir_.build_model_recurse(this_dir, checkbox_to_job)
             for i in range(len(self.jobs)):
-                this_dir.appendRow(self.job_row_(i))
+                job, row = self._job_row(i)
+                this_dir.appendRow(row)
+                checkbox_to_job[row[Column.Reference].index()] = job
 
-    def rebuild_model(self, model: QStandardItemModel):
-        model.clear()
-        model.setHorizontalHeaderLabels([str(col) for col in COLUMNS])
-        self.build_model_recurse_(model.invisibleRootItem())
+
+class DataDirectoryModel(QStandardItemModel):
+    def __init__(self, parent: QObject):
+        super().__init__(parent)
+        self.directory = DataDirectory()
+        self.itemChanged.connect(self._checkbox_changed)
+        self.checkbox_to_job: dict[QModelIndex, GaussianJob] = {}
+        self.reference_g_au = 0.0
+
+    def load_path(self, path: Path):
+        self.directory.path = path
+        self.directory.scan_concurrently()
+
+        self.clear()
+        self.checkbox_to_job.clear()
+        self.reference_g_au = 0.0
+        self.setHorizontalHeaderLabels([str(col) for col in COLUMNS])
+        self.directory.build_model_recurse(self.invisibleRootItem(), self.checkbox_to_job)
+
+    @Slot(QStandardItem)
+    def _checkbox_changed(self, item: QStandardItem):
+        if item.column() != Column.Reference:
+            return
+        reference_job = self.checkbox_to_job[item.index()]
+        if item.checkState() == Qt.CheckState.Checked:
+            self.reference_g_au += reference_job.free_energy_au
+        else:
+            self.reference_g_au -= reference_job.free_energy_au
+        self._rerender_energies()
+
+    def _rerender_energies(self):
+        for checkbox_idx, job in self.checkbox_to_job.items():
+            for col in [Column.GHartree, Column.GkJPerMol, Column.GkcalPerMol]:
+                item = self.itemFromIndex(checkbox_idx.siblingAtColumn(col))
+                if self.itemFromIndex(checkbox_idx).checkState() == Qt.CheckState.Checked:
+                    item.setText("0 (ref)")
+                else:
+                    item.setText(job.fmt(col, self.reference_g_au))  # type: ignore
 
 
 class GaussScreen(QWidget):
@@ -421,7 +462,7 @@ class GaussScreen(QWidget):
         self.browse_path.clicked.connect(self.select_active_path)
         self.active_path_box.layout().addWidget(self.browse_path)
         self.reload = QPushButton("Reload", self.active_path_box)
-        self.reload.clicked.connect(self.refresh_tree)
+        self.reload.clicked.connect(self.reload_path)
         self.active_path_box.layout().addWidget(self.reload)
         main_layout.addWidget(self.active_path_box)
 
@@ -431,18 +472,14 @@ class GaussScreen(QWidget):
         self.filters_box.layout().addWidget(self.filter_only_success)
         main_layout.addWidget(self.filters_box)
 
-        self.directory = DataDirectory()
-        self.model = QStandardItemModel(self)
+        self.model = DataDirectoryModel(self)
         self.tree = QTreeView(self)
         self.tree.setModel(self.model)
         main_layout.addWidget(self.tree)
 
         self.setLayout(main_layout)
 
-        # self.select_active_path()  # REMOVE BEFORE FLIGHT
-        self.path.setText(QDir.currentPath())
-        self.directory.path = Path(self.path.text())
-        self.refresh_tree()
+        self.select_active_path()
 
     @Slot()
     def select_active_path(self):
@@ -455,14 +492,11 @@ class GaussScreen(QWidget):
             self.path.setText(dialog.selectedFiles()[0])
         elif not self.path.text():
             self.path.setText(QDir.currentPath())
-        self.directory.path = Path(self.path.text())
-        self.refresh_tree()
+        self.reload_path()
 
     @Slot()
-    def refresh_tree(self):
-        self.directory.scan_concurrently()
-        self.directory.rebuild_model(self.model)
-        self.model.layoutChanged.emit()
+    def reload_path(self):
+        self.model.load_path(Path(self.path.text()))
         self.tree.expandAll()
         for i in range(self.model.columnCount() - 1):
             self.tree.resizeColumnToContents(i)
