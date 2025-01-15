@@ -325,6 +325,9 @@ class DataDirectory:
 
         self._prune_empty()
 
+        self.dirs.sort(key=lambda dir: dir.path)
+        self.jobs.sort(key=lambda job: job.path)
+
         duration = time.time() - start
         print(f"Parsed {self.len_recurse()} jobs in {duration:.2f} s.")
 
