@@ -168,14 +168,14 @@ class GaussianJob:
     charge: int = 0
     mult: int = 1  # 2S+1
     formula: MolecularFormula = dataclasses.field(default_factory=MolecularFormula)
-    route: str = ""
+    route: list[str] = dataclasses.field(default_factory=list)
     functional: str | None = None
     basis: str | None = None
     solvent: str | None = None
-    num_imag_freq: int = 0
+    num_imag_freq: int | None = None
     # electronic_energy_au = 0  # TODO
-    free_energy_au = 0
-    success: bool = False
+    free_energy_au: float | None = None
+    success: bool | None = None
 
     def parse(self):
         print(f"Parsing path {self.path}...")
@@ -190,27 +190,32 @@ class GaussianJob:
             state = LogParseState.SearchRoute
             while state != LogParseState.Terminated:
                 line = log.readline().decode()
+
                 if not line:
                     state = LogParseState.Terminated
                     continue
                 line = line.strip("\n")
 
+                if line.startswith(" Error termination"):
+                    self.success = False
+                    state = LogParseState.Terminated
+                    continue
+
                 match state:
                     case LogParseState.SearchRoute:
                         if line.startswith(" #"):
-                            self.route = line.removeprefix(" #").strip()
+                            self.route.append(line.removeprefix(" #").strip())
                             state = LogParseState.ReadRoute
                     case LogParseState.ReadRoute:
                         if set(line.strip()) != {"-"}:
                             # Remove only the first character, which is always a space.
-                            self.route += line[1:]
+                            self.route[0] += line[1:]
                         else:
-                            keywords = self.route.split()
-                            for kw in keywords:
-                                kw_lower = kw.lower().strip()
-                                if kw_lower == "genecp":
+                            self.route = [kw.lower().strip() for kw in self.route[0].split()]
+                            for kw in self.route:
+                                if kw == "genecp":
                                     self.basis = kw
-                                elif kw_lower.startswith("scrf"):
+                                elif kw.startswith("scrf"):
                                     if match := RE_SCRF_SOLVENT.search(kw):
                                         self.solvent = match.group(1)
                                 elif f_b := try_parse_functional_basis(kw):
@@ -238,6 +243,7 @@ class GaussianJob:
                             state = LogParseState.ReadIr
                     case LogParseState.ReadIr:
                         if match := RE_IR_FREQ.match(line):
+                            self.num_imag_freq = 0
                             for g in match.groups():
                                 if float(g) < 0:
                                     self.num_imag_freq += 1
@@ -276,17 +282,29 @@ class GaussianJob:
             case Column.Solvent:
                 return f"{self.solvent}"
             case Column.Theory:
-                return f"{self.functional or "unknown"}/{self.basis or "unknown"}"
+                return f"{self.functional or 'unknown'}/{self.basis or 'unknown'}"
             case Column.Success:
-                return f"{self.success}"
+                return f"{self.success}" if self.success is not None else "Unknown"
             case Column.ImagFreq:
-                return f"{self.num_imag_freq}"
+                return f"{self.num_imag_freq}" if self.num_imag_freq is not None else "N/A"
             case Column.GHartree:
-                return f"{self.free_energy_au - ref_g_au:+.6f}"
+                return (
+                    f"{self.free_energy_au - ref_g_au:+.6f}"
+                    if self.free_energy_au is not None
+                    else "N/A"
+                )
             case Column.GkJPerMol:
-                return f"{hartree_to_kj_per_mol(self.free_energy_au - ref_g_au):+.4f}"
+                return (
+                    f"{hartree_to_kj_per_mol(self.free_energy_au - ref_g_au):+.4f}"
+                    if self.free_energy_au is not None
+                    else "N/A"
+                )
             case Column.GkcalPerMol:
-                return f"{hartree_to_kj_per_mol(self.free_energy_au - ref_g_au) * KJ_TO_KCAL:+.4f}"
+                return (
+                    f"{hartree_to_kj_per_mol(self.free_energy_au - ref_g_au) * KJ_TO_KCAL:+.4f}"
+                    if self.free_energy_au is not None
+                    else "N/A"
+                )
             case Column.Reference:
                 return False
 
@@ -436,6 +454,7 @@ class DataDirectoryModel(QStandardItemModel):
         if item.column() != Column.Reference:
             return
         reference_job = self.checkbox_to_job[item.index()]
+        assert reference_job.free_energy_au is not None
         if item.checkState() == Qt.CheckState.Checked:
             self.reference_g_au += reference_job.free_energy_au
         else:
