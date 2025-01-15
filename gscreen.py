@@ -22,7 +22,6 @@ from PySide6.QtCore import QDir, QModelIndex, QObject, Qt, Slot
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QFileDialog,
     QFileIconProvider,
     QGroupBox,
@@ -68,6 +67,25 @@ class MolecularFormula:
         if sym in PTABLE.atomic_nums:
             self._data[PTABLE.atomic_nums[sym]] += 1
 
+    def clear(self):
+        self._data.clear()
+
+    def is_empty(self) -> bool:
+        return self._data.total() == 0
+
+    def __iadd__(self, rhs: Self) -> Self:
+        self._data += rhs._data
+        return self
+
+    def __isub__(self, rhs: Self) -> Self:
+        self._data -= rhs._data
+        return self
+
+    def __eq__(self, rhs: object) -> bool:
+        if not isinstance(rhs, MolecularFormula):
+            raise NotImplementedError
+        return self._data == rhs._data
+
     def __repr__(self) -> str:
         ret = ""
         for z in PTABLE.iter_order:
@@ -108,7 +126,7 @@ RE_IR_FREQ = re.compile(r"^ Frequencies --\s+(-?\d+\.\d*)(?:\s+(-?\d+\.\d*))?(?:
 RE_FREE_ENERGY = re.compile(r"^ Sum of electronic and thermal Free Energies= \s+(-\d+\.\d+)$")
 
 
-def hartree_to_kj_per_mol(au: float) -> float:
+def au_to_kj_per_mol(au: float) -> float:
     return au * 2625.499639
 
 
@@ -160,6 +178,35 @@ class Column(IntEnum):
 
 COLUMNS = [c for c in Column]
 assert COLUMNS[0] == Column.Name
+
+
+@dataclass
+class References:
+    formula: MolecularFormula = dataclasses.field(default_factory=MolecularFormula)
+    charge: int = 0
+    g_au: float = 0
+
+    def __iadd__(self, job: "GaussianJob") -> Self:
+        assert job.success and job.free_energy_au is not None
+        self.formula += job.formula
+        self.charge += job.charge
+        self.g_au += job.free_energy_au
+        return self
+
+    def __isub__(self, job: "GaussianJob") -> Self:
+        assert job.success and job.free_energy_au is not None
+        self.formula -= job.formula
+        self.charge -= job.charge
+        self.g_au -= job.free_energy_au
+        return self
+
+    def clear(self):
+        self.formula.clear()
+        self.charge = 0
+        self.g_au = 0
+
+    def is_comparable(self, job: "GaussianJob") -> bool:
+        return self.formula.is_empty() or self.formula == job.formula and self.charge == job.charge
 
 
 @dataclass
@@ -269,7 +316,14 @@ class GaussianJob:
             f"G={self.free_energy_au:.4f}au)"
         )
 
-    def fmt(self, col: Column, ref_g_au: float = 0.0) -> bool | str:
+    def fmt(self, col: Column, ref: References | None = None) -> str:
+        g_au = self.free_energy_au
+        if g_au and ref:
+            if ref.is_comparable(self):
+                g_au -= ref.g_au
+            else:
+                g_au = None
+
         match col:
             case Column.Name:
                 return self.path.stem
@@ -288,25 +342,13 @@ class GaussianJob:
             case Column.ImagFreq:
                 return f"{self.num_imag_freq}" if self.num_imag_freq is not None else "N/A"
             case Column.GHartree:
-                return (
-                    f"{self.free_energy_au - ref_g_au:+.6f}"
-                    if self.free_energy_au is not None
-                    else "N/A"
-                )
+                return f"{g_au:+.6f}" if g_au else "N/A"
             case Column.GkJPerMol:
-                return (
-                    f"{hartree_to_kj_per_mol(self.free_energy_au - ref_g_au):+.4f}"
-                    if self.free_energy_au is not None
-                    else "N/A"
-                )
+                return f"{au_to_kj_per_mol(g_au):+.4f}" if g_au else "N/A"
             case Column.GkcalPerMol:
-                return (
-                    f"{hartree_to_kj_per_mol(self.free_energy_au - ref_g_au) * KJ_TO_KCAL:+.4f}"
-                    if self.free_energy_au is not None
-                    else "N/A"
-                )
+                return f"{au_to_kj_per_mol(g_au) * KJ_TO_KCAL:+.4f}" if g_au else "N/A"
             case Column.Reference:
-                return False
+                return ""
 
 
 @dataclass(frozen=True)
@@ -437,7 +479,7 @@ class DataDirectoryModel(QStandardItemModel):
         self.directory = DataDirectory()
         self.itemChanged.connect(self._checkbox_changed)
         self.checkbox_to_job: dict[QModelIndex, GaussianJob] = {}
-        self.reference_g_au = 0.0
+        self.references = References()
 
     def load_path(self, path: Path):
         self.directory.path = path
@@ -445,7 +487,7 @@ class DataDirectoryModel(QStandardItemModel):
 
         self.clear()
         self.checkbox_to_job.clear()
-        self.reference_g_au = 0.0
+        self.references.clear()
         self.setHorizontalHeaderLabels([str(col) for col in COLUMNS])
         self.directory.build_model_recurse(self.invisibleRootItem(), self.checkbox_to_job)
 
@@ -454,12 +496,18 @@ class DataDirectoryModel(QStandardItemModel):
         if item.column() != Column.Reference:
             return
         reference_job = self.checkbox_to_job[item.index()]
-        assert reference_job.free_energy_au is not None
         if item.checkState() == Qt.CheckState.Checked:
-            self.reference_g_au += reference_job.free_energy_au
+            self.references += reference_job
         else:
-            self.reference_g_au -= reference_job.free_energy_au
+            self.references -= reference_job
         self._rerender_energies()
+
+    def clear_references(self):
+        for checkbox_idx in self.checkbox_to_job:
+            checkbox = self.itemFromIndex(checkbox_idx)
+            if not checkbox.isCheckable():
+                continue
+            checkbox.setCheckState(Qt.CheckState.Unchecked)
 
     def _rerender_energies(self):
         for checkbox_idx, job in self.checkbox_to_job.items():
@@ -468,7 +516,7 @@ class DataDirectoryModel(QStandardItemModel):
                 if self.itemFromIndex(checkbox_idx).checkState() == Qt.CheckState.Checked:
                     item.setText("0 (ref)")
                 else:
-                    item.setText(job.fmt(col, self.reference_g_au))  # type: ignore
+                    item.setText(job.fmt(col, self.references))
 
 
 class GaussScreen(QWidget):
@@ -479,23 +527,24 @@ class GaussScreen(QWidget):
 
         main_layout = QVBoxLayout(self)
 
-        self.active_path_box = QGroupBox("Active path")
-        self.path = QLineEdit(self.active_path_box)
-        self.active_path_box.setLayout(QHBoxLayout())
-        self.active_path_box.layout().addWidget(self.path)  # type: ignore
-        self.browse_path = QPushButton("Browse", self.active_path_box)
-        self.browse_path.clicked.connect(self.select_active_path)
-        self.active_path_box.layout().addWidget(self.browse_path)  # type: ignore
-        self.reload = QPushButton("Reload", self.active_path_box)
-        self.reload.clicked.connect(self.reload_path)
-        self.active_path_box.layout().addWidget(self.reload)  # type: ignore
-        main_layout.addWidget(self.active_path_box)
+        self.box_path = QGroupBox("Active path")
+        self.textbox_path = QLineEdit(self.box_path)
+        self.box_path.setLayout(QHBoxLayout())
+        self.box_path.layout().addWidget(self.textbox_path)  # type: ignore
+        self.btn_browser = QPushButton("Browse", self.box_path)
+        self.btn_browser.clicked.connect(self.select_active_path)
+        self.box_path.layout().addWidget(self.btn_browser)  # type: ignore
+        self.btn_reload = QPushButton("Reload", self.box_path)
+        self.btn_reload.clicked.connect(self.reload_path)
+        self.box_path.layout().addWidget(self.btn_reload)  # type: ignore
+        main_layout.addWidget(self.box_path)
 
-        self.filters_box = QGroupBox("Filters")
-        self.filters_box.setLayout(QVBoxLayout())
-        self.filter_only_success = QCheckBox("Show only success", self.filters_box)
-        self.filters_box.layout().addWidget(self.filter_only_success)  # type: ignore
-        main_layout.addWidget(self.filters_box)
+        self.box_opt = QGroupBox("Options")
+        self.box_opt.setLayout(QHBoxLayout())
+        self.btn_clear_ref = QPushButton("Clear References", self.box_opt)
+        self.btn_clear_ref.clicked.connect(self.clear_references)
+        self.box_opt.layout().addWidget(self.btn_clear_ref)  # type: ignore
+        main_layout.addWidget(self.box_opt)
 
         self.model = DataDirectoryModel(self)
         self.tree = QTreeView(self)
@@ -511,20 +560,24 @@ class GaussScreen(QWidget):
         dialog = QFileDialog(self)
         dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
         dialog.setFileMode(QFileDialog.FileMode.Directory)
-        if self.path.text():
-            dialog.setDirectory(self.path.text())
+        if self.textbox_path.text():
+            dialog.setDirectory(self.textbox_path.text())
         if dialog.exec():
-            self.path.setText(dialog.selectedFiles()[0])
-        elif not self.path.text():
-            self.path.setText(QDir.currentPath())
+            self.textbox_path.setText(dialog.selectedFiles()[0])
+        elif not self.textbox_path.text():
+            self.textbox_path.setText(QDir.currentPath())
         self.reload_path()
 
     @Slot()
     def reload_path(self):
-        self.model.load_path(Path(self.path.text()))
+        self.model.load_path(Path(self.textbox_path.text()))
         self.tree.expandAll()
         for i in range(self.model.columnCount() - 1):
             self.tree.resizeColumnToContents(i)
+
+    @Slot()
+    def clear_references(self):
+        self.model.clear_references()
 
 
 if __name__ == "__main__":
