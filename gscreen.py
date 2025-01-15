@@ -431,7 +431,7 @@ class DataDirectoryModel(QStandardItemModel):
         self.setHorizontalHeaderLabels([str(col) for col in COLUMNS])
         self.directory.build_model_recurse(self.invisibleRootItem(), self.checkbox_to_job)
 
-    @Slot(QStandardItem)
+    @Slot(QStandardItem)  # type: ignore
     def _checkbox_changed(self, item: QStandardItem):
         if item.column() != Column.Reference:
             return
@@ -463,19 +463,19 @@ class GaussScreen(QWidget):
         self.active_path_box = QGroupBox("Active path")
         self.path = QLineEdit(self.active_path_box)
         self.active_path_box.setLayout(QHBoxLayout())
-        self.active_path_box.layout().addWidget(self.path)
+        self.active_path_box.layout().addWidget(self.path)  # type: ignore
         self.browse_path = QPushButton("Browse", self.active_path_box)
         self.browse_path.clicked.connect(self.select_active_path)
-        self.active_path_box.layout().addWidget(self.browse_path)
+        self.active_path_box.layout().addWidget(self.browse_path)  # type: ignore
         self.reload = QPushButton("Reload", self.active_path_box)
         self.reload.clicked.connect(self.reload_path)
-        self.active_path_box.layout().addWidget(self.reload)
+        self.active_path_box.layout().addWidget(self.reload)  # type: ignore
         main_layout.addWidget(self.active_path_box)
 
         self.filters_box = QGroupBox("Filters")
         self.filters_box.setLayout(QVBoxLayout())
         self.filter_only_success = QCheckBox("Show only success", self.filters_box)
-        self.filters_box.layout().addWidget(self.filter_only_success)
+        self.filters_box.layout().addWidget(self.filter_only_success)  # type: ignore
         main_layout.addWidget(self.filters_box)
 
         self.model = DataDirectoryModel(self)
