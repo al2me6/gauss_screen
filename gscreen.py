@@ -406,7 +406,7 @@ class DataDirectory:
             item.setEditable(False)
 
         row[Column.Name].setIcon(self._ICON_PROVIDER.icon(QFileIconProvider.IconType.File))
-        row[Column.Reference].setCheckable(True)
+        row[Column.Reference].setCheckable(job.free_energy_au is not None)
 
         return job, row
 
