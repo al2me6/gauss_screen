@@ -229,7 +229,10 @@ class GaussianJob:
                         if match := RE_ATOM_POSITION.match(line):
                             self.formula.add_atom(match.group(1))
                         else:
-                            state = LogParseState.SearchIr
+                            if any(kw.startswith("irc") for kw in self.route):
+                                state = LogParseState.ReadTermination
+                            else:
+                                state = LogParseState.SearchIr
                     case LogParseState.SearchIr:
                         if line.startswith(" Harmonic frequencies (cm**-1)"):
                             state = LogParseState.ReadIr
