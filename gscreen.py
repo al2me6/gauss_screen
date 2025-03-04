@@ -142,6 +142,7 @@ class Column(IntEnum):
     Mult = auto()
     Solvent = auto()
     Theory = auto()
+    RealFreq = auto()
     ImagFreq = auto()
     GHartree = auto()
     GkJPerMol = auto()
@@ -164,6 +165,8 @@ class Column(IntEnum):
                 return "Theory"
             case self.Success:
                 return "Succeeded"
+            case self.RealFreq:
+                return "# Real Freq"
             case self.ImagFreq:
                 return "# Imag Freq"
             case self.GHartree:
@@ -219,6 +222,7 @@ class GaussianJob:
     functional: str | None = None
     basis: str | None = None
     solvent: str | None = None
+    num_real_freq: int | None = None
     num_imag_freq: int | None = None
     # electronic_energy_au = 0  # TODO
     free_energy_au: float | None = None
@@ -289,11 +293,18 @@ class GaussianJob:
                         if line.startswith(" Harmonic frequencies (cm**-1)"):
                             state = LogParseState.ReadIr
                     case LogParseState.ReadIr:
-                        if match := RE_IR_FREQ.match(line):
+                        if self.num_real_freq is None:
+                            self.num_real_freq = 0
+                        if self.num_imag_freq is None:
                             self.num_imag_freq = 0
+                        if match := RE_IR_FREQ.match(line):
                             for g in match.groups():
+                                if not g:
+                                    continue
                                 if float(g) < 0:
                                     self.num_imag_freq += 1
+                                else:
+                                    self.num_real_freq += 1
                         if not line:
                             state = LogParseState.ReadFreeEnergy
                     case LogParseState.ReadFreeEnergy:
@@ -339,6 +350,8 @@ class GaussianJob:
                 return f"{self.functional or 'unknown'}/{self.basis or 'unknown'}"
             case Column.Success:
                 return f"{self.success}" if self.success is not None else "Unknown"
+            case Column.RealFreq:
+                return f"{self.num_real_freq}" if self.num_real_freq is not None else "N/A"
             case Column.ImagFreq:
                 return f"{self.num_imag_freq}" if self.num_imag_freq is not None else "N/A"
             case Column.GHartree:
