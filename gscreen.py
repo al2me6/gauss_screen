@@ -65,7 +65,7 @@ class MolecularFormula:
 
     def add_atom(self, sym: str):
         if sym in PTABLE.atomic_nums:
-            self._data[PTABLE.atomic_nums[sym]] += 1
+            self._data[PTABLE.atomic_nums[sym]] += 1  # type: ignore
 
     def clear(self):
         self._data.clear()
