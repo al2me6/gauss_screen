@@ -18,7 +18,17 @@ from enum import Enum, IntEnum, auto
 from pathlib import Path
 from typing import Self
 
-from PySide6.QtCore import QDir, QModelIndex, QObject, Qt, Slot
+from PySide6.QtCore import (
+    QAbstractItemModel,
+    QDir,
+    QModelIndex,
+    QObject,
+    QPersistentModelIndex,
+    QRect,
+    QSize,
+    Qt,
+    Slot,
+)
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QApplication,
@@ -28,6 +38,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QPushButton,
+    QSpinBox,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -164,11 +177,11 @@ class Column(IntEnum):
             case self.Theory:
                 return "Theory"
             case self.Success:
-                return "Succeeded"
+                return "Success"
             case self.RealFreq:
-                return "# Real Freq"
+                return "# Re Vib"
             case self.ImagFreq:
-                return "# Imag Freq"
+                return "# Im Vib"
             case self.GHartree:
                 return "G(au)"
             case self.GkJPerMol:
@@ -181,35 +194,6 @@ class Column(IntEnum):
 
 COLUMNS = [c for c in Column]
 assert COLUMNS[0] == Column.Name
-
-
-@dataclass
-class References:
-    formula: MolecularFormula = dataclasses.field(default_factory=MolecularFormula)
-    charge: int = 0
-    g_au: float = 0
-
-    def __iadd__(self, job: "GaussianJob") -> Self:
-        assert job.success and job.free_energy_au is not None
-        self.formula += job.formula
-        self.charge += job.charge
-        self.g_au += job.free_energy_au
-        return self
-
-    def __isub__(self, job: "GaussianJob") -> Self:
-        assert job.success and job.free_energy_au is not None
-        self.formula -= job.formula
-        self.charge -= job.charge
-        self.g_au -= job.free_energy_au
-        return self
-
-    def clear(self):
-        self.formula.clear()
-        self.charge = 0
-        self.g_au = 0
-
-    def is_comparable(self, job: "GaussianJob") -> bool:
-        return self.formula.is_empty() or self.formula == job.formula and self.charge == job.charge
 
 
 @dataclass
@@ -227,6 +211,9 @@ class GaussianJob:
     # electronic_energy_au = 0  # TODO
     free_energy_au: float | None = None
     success: bool | None = None
+
+    def __hash__(self) -> int:
+        return id(self)
 
     def parse(self):
         print(f"Parsing path {self.path}...")
@@ -317,7 +304,7 @@ class GaussianJob:
                             state = LogParseState.Terminated
         return self
 
-    def replace(self, other: Self):
+    def _replace(self, other: Self):
         self.__dict__.update(other.__dict__)
 
     def __str__(self) -> str:
@@ -327,11 +314,12 @@ class GaussianJob:
             f"G={self.free_energy_au:.4f}au)"
         )
 
-    def fmt(self, col: Column, ref: References | None = None) -> str:
+    def data(self, col: Column, ref: "References | None" = None) -> str | int:
         g_au = self.free_energy_au
         if g_au and ref:
-            if ref.is_comparable(self):
-                g_au -= ref.g_au
+            tally = ref.tally()
+            if tally.is_comparable(self):
+                g_au -= tally.g_au
             else:
                 g_au = None
 
@@ -343,7 +331,7 @@ class GaussianJob:
             case Column.Charge:
                 return f"{self.charge:+}"
             case Column.Mult:
-                return f"{self.mult}"
+                return self.mult
             case Column.Solvent:
                 return f"{self.solvent}"
             case Column.Theory:
@@ -361,7 +349,7 @@ class GaussianJob:
             case Column.GkcalPerMol:
                 return f"{au_to_kj_per_mol(g_au) * KJ_TO_KCAL:+.4f}" if g_au else "N/A"
             case Column.Reference:
-                return ""
+                return 1
 
 
 @dataclass(frozen=True)
@@ -374,12 +362,88 @@ class FuturesHolder:
         self.replacers.append(replacer)
 
 
+class SpinBoxDelegate(QStyledItemDelegate):
+    """https://doc.qt.io/qtforpython-6/examples/example_widgets_itemviews_spinboxdelegate.html"""
+    def __init__(self, /, parent: QObject | None = None):
+        super().__init__(parent)
+
+    def createEditor(
+        self,
+        parent: QWidget,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> QSpinBox:
+        editor = QSpinBox(parent)
+        editor.setMinimum(1)
+        return editor
+
+    def setEditorData(self, editor: QWidget, index: QModelIndex | QPersistentModelIndex):
+        assert isinstance(editor, QSpinBox)
+        value = index.model().data(index, Qt.ItemDataRole.EditRole)
+        if isinstance(value, int):
+            editor.setValue(value)
+        else:
+            editor.setValue(editor.valueFromText(value))
+
+    def setModelData(
+        self, editor: QWidget, model: QAbstractItemModel, index: QModelIndex | QPersistentModelIndex
+    ):
+        assert isinstance(editor, QSpinBox)
+        editor.interpretText()
+        model.setData(index, editor.value(), Qt.ItemDataRole.EditRole)
+
+    def updateEditorGeometry(
+        self,
+        editor: QWidget,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ):
+        rect: QRect = option.rect  # type: ignore
+        decoration: QSize = option.decorationSize  # type: ignore
+        rect.adjust(max(decoration.width(), 0), 0, 0, 0)
+        editor.setGeometry(rect)
+
+
+@dataclass(frozen=True)
+class ReferenceTally:
+    formula: MolecularFormula
+    charge: int
+    g_au: float
+
+    def is_comparable(self, job: GaussianJob) -> bool:
+        return self.formula.is_empty() or self.formula == job.formula and self.charge == job.charge
+
+
+class References:
+    def __init__(self):
+        self._inner: Counter[GaussianJob] = Counter()
+
+    def set(self, job: GaussianJob, count: int):
+        assert job.free_energy_au is not None
+        assert count >= 0
+        self._inner[job] = count
+
+    def clear(self):
+        self._inner.clear()
+
+    def tally(self) -> ReferenceTally:
+        formula = MolecularFormula()
+        charge = 0
+        g_au = 0.0
+        for job, count in self._inner.items():
+            for _ in range(count):
+                formula += job.formula
+                charge += job.charge
+                g_au += job.free_energy_au or 0.0
+        return ReferenceTally(formula, charge, g_au)
+
+
 class DataDirectory:
     _ICON_PROVIDER = QFileIconProvider()
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or Path()
-        self.dirs: list[Self] = []  # type: ignore
+        self.dirs: list[Self] = []
         self.jobs: list[GaussianJob] = []
 
     def scan_concurrently(self):
@@ -413,7 +477,7 @@ class DataDirectory:
                 self.dirs.append(DataDirectory(item))  # type:ignore
             elif item.is_file() and item.suffix == ".log":
                 job = GaussianJob(item)
-                holder.append(executor.submit(job.parse), job.replace)
+                holder.append(executor.submit(job.parse), job._replace)
                 self.jobs.append(job)
         for subdir in self.dirs:
             subdir._scan_recurse(executor, holder)
@@ -456,12 +520,15 @@ class DataDirectory:
     def _job_row(self, idx: int) -> tuple[GaussianJob, list[QStandardItem]]:
         job = self.jobs[idx]
 
-        row = [QStandardItem(job.fmt(col)) for col in COLUMNS]
-        for item in row:
-            item.setEditable(False)
+        row = [QStandardItem() for _ in COLUMNS]
+        for col in COLUMNS:
+            row[col].setData(job.data(col), Qt.ItemDataRole.EditRole)
+            row[col].setEditable(False)
 
         row[Column.Name].setIcon(self._ICON_PROVIDER.icon(QFileIconProvider.IconType.File))
-        row[Column.Reference].setCheckable(job.free_energy_au is not None)
+        row[Column.Reference].setEnabled(job.free_energy_au is not None)
+        row[Column.Reference].setCheckable(True)
+        row[Column.Reference].setEditable(True)
 
         return job, row
 
@@ -510,9 +577,9 @@ class DataDirectoryModel(QStandardItemModel):
             return
         reference_job = self.checkbox_to_job[item.index()]
         if item.checkState() == Qt.CheckState.Checked:
-            self.references += reference_job
+            self.references.set(reference_job, item.data(Qt.ItemDataRole.EditRole))
         else:
-            self.references -= reference_job
+            self.references.set(reference_job, 0)
         self._rerender_energies()
 
     def clear_references(self):
@@ -529,7 +596,7 @@ class DataDirectoryModel(QStandardItemModel):
                 if self.itemFromIndex(checkbox_idx).checkState() == Qt.CheckState.Checked:
                     item.setText("0 (ref)")
                 else:
-                    item.setText(job.fmt(col, self.references))
+                    item.setData(job.data(col, self.references), Qt.ItemDataRole.EditRole)
 
 
 class GaussScreen(QWidget):
@@ -561,6 +628,7 @@ class GaussScreen(QWidget):
 
         self.model = DataDirectoryModel(self)
         self.tree = QTreeView(self)
+        self.tree.setItemDelegateForColumn(Column.Reference, SpinBoxDelegate())
         self.tree.setModel(self.model)
         main_layout.addWidget(self.tree)
 
