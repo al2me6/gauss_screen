@@ -314,7 +314,7 @@ class GaussianJob:
             f"G={self.free_energy_au:.4f}au)"
         )
 
-    def data(self, col: Column, ref: "References | None" = None) -> str | int:
+    def data(self, col: Column, ref: "References | None" = None) -> str | int | None:
         g_au = self.free_energy_au
         if g_au and ref:
             tally = ref.tally()
@@ -364,6 +364,7 @@ class FuturesHolder:
 
 class SpinBoxDelegate(QStyledItemDelegate):
     """https://doc.qt.io/qtforpython-6/examples/example_widgets_itemviews_spinboxdelegate.html"""
+
     def __init__(self, /, parent: QObject | None = None):
         super().__init__(parent)
 
@@ -505,8 +506,12 @@ class DataDirectory:
             ret += f"  {job}\n"
         return ret
 
-    def collapsible(self) -> bool:
-        return not self.dirs and len(self.jobs) == 1
+    def try_collapse(self) -> Self | None:
+        if not self.dirs and len(self.jobs) == 1:
+            return self
+        elif len(self.dirs) == 1:
+            return self.dirs[0].try_collapse()
+        return None
 
     def len_recurse(self) -> int:
         return len(self.jobs) + sum(dir_.len_recurse() for dir_ in self.dirs)
@@ -535,9 +540,9 @@ class DataDirectory:
     def build_model_recurse(
         self, parent: QStandardItem, checkbox_to_job: dict[QModelIndex, GaussianJob]
     ):
-        if self.collapsible():
-            job, row = self._job_row(0)
-            row[Column.Name].setText(self.path.name)
+        if (inner := self.try_collapse()) is not None:
+            (job, row) = inner._job_row(0)
+            row[Column.Name].setText(str(job.path.parent.relative_to(self.path.parent)))
             row[Column.Name].setIcon(self._ICON_PROVIDER.icon(QFileIconProvider.IconType.File))
             parent.appendRow(row)
             checkbox_to_job[row[Column.Reference].index()] = job
