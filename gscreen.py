@@ -20,7 +20,6 @@ from typing import Self
 
 from PySide6.QtCore import (
     QAbstractItemModel,
-    QDir,
     QModelIndex,
     QObject,
     QPersistentModelIndex,
@@ -643,15 +642,7 @@ class GaussScreen(QWidget):
 
     @Slot()
     def select_active_path(self):
-        dialog = QFileDialog(self)
-        dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
-        dialog.setFileMode(QFileDialog.FileMode.Directory)
-        if self.textbox_path.text():
-            dialog.setDirectory(self.textbox_path.text())
-        if dialog.exec():
-            self.textbox_path.setText(dialog.selectedFiles()[0])
-        elif not self.textbox_path.text():
-            self.textbox_path.setText(QDir.currentPath())
+        self.textbox_path.setText(QFileDialog.getExistingDirectory(self))
         self.reload_path()
 
     @Slot()
