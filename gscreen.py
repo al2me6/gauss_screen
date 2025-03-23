@@ -114,6 +114,7 @@ class LogParseState(Enum):
     SearchStructure = auto()
     ReadChargeMult = auto()
     ReadFormula = auto()
+    SearchEE = auto()
     SearchIr = auto()
     ReadIr = auto()
     ReadFreeEnergy = auto()
@@ -132,8 +133,9 @@ def try_parse_functional_basis(keyword: str) -> tuple[str, str | None] | None:
 
 
 RE_SCRF_SOLVENT = re.compile(r"Solvent=([^,)]+)", re.IGNORECASE)
-RE_CHARGE_MULT = re.compile(r"^ Charge =\s+(-?\d+) Multiplicity = (\d+)$")
-RE_ATOM_POSITION = re.compile(r"^ ([A-Za-z]{1,2})\s+(-?\d+\.\d*)\s+(-?\d+\.\d*)\s+(-?\d+\.\d*) $")
+RE_CHARGE_MULT = re.compile(r"^ Charge =\s+(-?\d+) Multiplicity =\s+(\d+)$")
+RE_ATOM_POSITION = re.compile(r"^ ([A-Za-z]{1,2})\s+(-?\d+\.\d*)\s+(-?\d+\.\d*)\s+(-?\d+\.\d*)\s?$")
+RE_ELEC_ENERGY = re.compile(r"^ SCF Done:  E\(.+\) =\s+(-?\d+\.\d*)\s+A.U. after\s+\d+ cycles")
 RE_IR_FREQ = re.compile(r"^ Frequencies --\s+(-?\d+\.\d*)(?:\s+(-?\d+\.\d*))?(?:\s+(-?\d+\.\d*))?$")
 RE_FREE_ENERGY = re.compile(r"^ Sum of electronic and thermal Free Energies= \s+(-\d+\.\d+)$")
 
@@ -156,6 +158,7 @@ class Column(IntEnum):
     Theory = auto()
     RealFreq = auto()
     ImagFreq = auto()
+    EHartree = auto()
     GHartree = auto()
     GkJPerMol = auto()
     GkcalPerMol = auto()
@@ -181,6 +184,8 @@ class Column(IntEnum):
                 return "# Re Vib"
             case self.ImagFreq:
                 return "# Im Vib"
+            case self.EHartree:
+                return "E(au)"
             case self.GHartree:
                 return "G(au)"
             case self.GkJPerMol:
@@ -207,7 +212,7 @@ class GaussianJob:
     solvent: str | None = None
     num_real_freq: int | None = None
     num_imag_freq: int | None = None
-    # electronic_energy_au = 0  # TODO
+    electronic_energy_au: float | None = None
     free_energy_au: float | None = None
     success: bool | None = None
 
@@ -270,11 +275,15 @@ class GaussianJob:
                     case LogParseState.ReadFormula:
                         if match := RE_ATOM_POSITION.match(line):
                             self.formula.add_atom(match.group(1))
-                        else:
-                            if any(kw.startswith("irc") for kw in self.route):
+                        elif any(kw.startswith("irc") for kw in self.route):
                                 state = LogParseState.ReadTermination
-                            else:
-                                state = LogParseState.SearchIr
+                        else:
+                            state = LogParseState.SearchEE
+                    case LogParseState.SearchEE:
+                        if match := RE_ELEC_ENERGY.match(line):
+                            self.electronic_energy_au = float(match.group(1))
+                        elif line.startswith(" Optimization complete"):
+                            state = LogParseState.SearchIr
                     case LogParseState.SearchIr:
                         if line.startswith(" Harmonic frequencies (cm**-1)"):
                             state = LogParseState.ReadIr
@@ -313,7 +322,8 @@ class GaussianJob:
             f"G={self.free_energy_au:.4f}au)"
         )
 
-    def data(self, col: Column, ref: "References | None" = None) -> str | int | None:
+    def data(self, col: Column, ref: "References | None" = None) -> str | int:
+        # TODO: reference EE too.
         g_au = self.free_energy_au
         if g_au and ref:
             tally = ref.tally()
@@ -341,6 +351,8 @@ class GaussianJob:
                 return f"{self.num_real_freq}" if self.num_real_freq is not None else "N/A"
             case Column.ImagFreq:
                 return f"{self.num_imag_freq}" if self.num_imag_freq is not None else "N/A"
+            case Column.EHartree:
+                return f"{self.electronic_energy_au:+.6f}" if self.electronic_energy_au else "N/A"
             case Column.GHartree:
                 return f"{g_au:+.6f}" if g_au else "N/A"
             case Column.GkJPerMol:
