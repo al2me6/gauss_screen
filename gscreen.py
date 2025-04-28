@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-# spell-checker:ignore PTABLE scrf genecp Gkcal
+# spell-checker:ignore PTABLE scrf genecp Gkcal elec
 
 import concurrent.futures
 import dataclasses
@@ -212,7 +212,7 @@ class GaussianJob:
     solvent: str | None = None
     num_real_freq: int | None = None
     num_imag_freq: int | None = None
-    electronic_energy_au: float | None = None
+    elec_energy_au: float | None = None
     free_energy_au: float | None = None
     success: bool | None = None
 
@@ -276,12 +276,12 @@ class GaussianJob:
                         if match := RE_ATOM_POSITION.match(line):
                             self.formula.add_atom(match.group(1))
                         elif any(kw.startswith("irc") for kw in self.route):
-                                state = LogParseState.ReadTermination
+                            state = LogParseState.ReadTermination
                         else:
                             state = LogParseState.SearchEE
                     case LogParseState.SearchEE:
                         if match := RE_ELEC_ENERGY.match(line):
-                            self.electronic_energy_au = float(match.group(1))
+                            self.elec_energy_au = float(match.group(1))
                         elif line.startswith(" Optimization complete"):
                             state = LogParseState.SearchIr
                     case LogParseState.SearchIr:
@@ -325,7 +325,7 @@ class GaussianJob:
     def data(self, col: Column, ref: "References | None" = None) -> str | int:
         # TODO: reference EE too.
         g_au = self.free_energy_au
-        if g_au and ref:
+        if g_au is not None and ref:
             tally = ref.tally()
             if tally.is_comparable(self):
                 g_au -= tally.g_au
@@ -352,13 +352,13 @@ class GaussianJob:
             case Column.ImagFreq:
                 return f"{self.num_imag_freq}" if self.num_imag_freq is not None else "N/A"
             case Column.EHartree:
-                return f"{self.electronic_energy_au:+.6f}" if self.electronic_energy_au else "N/A"
+                return f"{self.elec_energy_au:+.6f}" if self.elec_energy_au is not None else "N/A"
             case Column.GHartree:
-                return f"{g_au:+.6f}" if g_au else "N/A"
+                return f"{g_au:+.6f}" if g_au is not None else "N/A"
             case Column.GkJPerMol:
-                return f"{au_to_kj_per_mol(g_au):+.4f}" if g_au else "N/A"
+                return f"{au_to_kj_per_mol(g_au):+.4f}" if g_au is not None else "N/A"
             case Column.GkcalPerMol:
-                return f"{au_to_kj_per_mol(g_au) * KJ_TO_KCAL:+.4f}" if g_au else "N/A"
+                return f"{au_to_kj_per_mol(g_au) * KJ_TO_KCAL:+.4f}" if g_au is not None else "N/A"
             case Column.Reference:
                 return 1
 
@@ -446,7 +446,7 @@ class References:
             for _ in range(count):
                 formula += job.formula
                 charge += job.charge
-                g_au += job.free_energy_au or 0.0
+                g_au += job.free_energy_au if job.free_energy_au is not None else 0.0
         return ReferenceTally(formula, charge, g_au)
 
 
