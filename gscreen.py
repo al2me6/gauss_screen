@@ -23,10 +23,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gscreen.gaussian_job import GaussianJob
-from gscreen.reference import References
-from gscreen.spin_box import SpinBoxDelegate
-from gscreen.utils import KJ_TO_KCAL, au_to_kj_per_mol
+from gaussian_job import GaussianJob
+from reference import References
+from spin_box import SpinBoxDelegate
+from utils import KJ_TO_KCAL, au_to_kj_per_mol
 
 
 @enum.verify(enum.EnumCheck.CONTINUOUS)
@@ -349,3 +349,17 @@ class GaussScreen(QWidget):
     @Slot()
     def clear_references(self):
         self.model.clear_references()
+
+
+if __name__ == "__main__":
+    import sys
+
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication([])
+
+    g_screen = GaussScreen()
+    g_screen.resize(1200, 800)
+    g_screen.show()
+
+    sys.exit(app.exec())

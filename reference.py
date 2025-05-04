@@ -1,8 +1,8 @@
 from collections import Counter
 from dataclasses import dataclass
 
-from gscreen.formula import MolecularFormula
-from gscreen.gaussian_job import GaussianJob
+from formula import MolecularFormula
+from gaussian_job import GaussianJob
 
 
 @dataclass(frozen=True)
