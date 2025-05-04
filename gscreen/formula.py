@@ -21,7 +21,9 @@ class PeriodicTable:
         self.iter_order.extend(z for z in range(len(self.symbols)) if z not in sort_first)
 
     def element(self, z: int) -> LiteralString:
-        return self.symbols[z + 1]
+        if z < 1 or len(self.symbols) < z:
+            raise RuntimeError(f"invalid atomic number {z}")
+        return self.symbols[z - 1]
 
 
 PTABLE = PeriodicTable()

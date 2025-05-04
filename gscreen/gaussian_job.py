@@ -4,11 +4,15 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Self
 
-from .formula import MolecularFormula
+from gscreen.atom_coords import AtomCoords
+
+from .formula import PTABLE, MolecularFormula
 
 RE_SCRF_SOLVENT = re.compile(r"Solvent=([^,)]+)", re.IGNORECASE)
 RE_CHARGE_MULT = re.compile(r"^ Charge =\s+(-?\d+) Multiplicity =\s+(\d+)$")
 RE_ATOM_POSITION = re.compile(r"^ ([A-Za-z]{1,2})\s+(-?\d+\.\d*)\s+(-?\d+\.\d*)\s+(-?\d+\.\d*)\s?$")
+# Index, atomic number, "atomic type" (?), x, y, z.
+RE_ATOM_COORDS = re.compile(r"^\s+\d+\s+(\d+)\s+\d+\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)$")
 RE_ELEC_ENERGY = re.compile(r"^ SCF Done:  E\(.+\) =\s+(-?\d+\.\d*)\s+A.U. after\s+\d+ cycles")
 RE_IR_FREQ = re.compile(r"^ Frequencies --\s+(-?\d+\.\d*)(?:\s+(-?\d+\.\d*))?(?:\s+(-?\d+\.\d*))?$")
 RE_FREE_ENERGY = re.compile(r"^ Sum of electronic and thermal Free Energies= \s+(-\d+\.\d+)$")
@@ -20,6 +24,8 @@ class LogParseState(Enum):
     SearchStructure = auto()
     ReadChargeMult = auto()
     ReadFormula = auto()
+    SearchGeometry = auto()
+    ReadGeometry = auto()
     SearchEE = auto()
     SearchIr = auto()
     ReadIr = auto()
@@ -42,6 +48,7 @@ class GaussianJob:
     num_imag_freq: int | None = None
     elec_energy_au: float | None = None
     free_energy_au: float | None = None
+    coordinates: list[AtomCoords] | None = None
     success: bool | None = None
 
     def __hash__(self) -> int:
@@ -117,12 +124,31 @@ class GaussianJob:
                         elif any(kw.startswith("irc") for kw in self.route):
                             state = LogParseState.ReadTermination
                         else:
+                            state = LogParseState.SearchGeometry
+                    case LogParseState.SearchGeometry:
+                        if line.startswith(" Optimization complete"):
+                            state = LogParseState.SearchIr
+                        elif line.strip() == "Standard orientation:":
+                            # Skip header.
+                            for _ in range(4):
+                                log.readline()
+                            self.coordinates = []
+                            state = LogParseState.ReadGeometry
+                    case LogParseState.ReadGeometry:
+                        assert self.coordinates is not None
+                        if match := RE_ATOM_COORDS.match(line):
+                            self.coordinates.append(
+                                AtomCoords(
+                                    PTABLE.element(int(match.group(1))),
+                                    *(float(match.group(i)) for i in [2, 3, 4]),
+                                )
+                            )
+                        else:
                             state = LogParseState.SearchEE
                     case LogParseState.SearchEE:
                         if match := RE_ELEC_ENERGY.match(line):
                             self.elec_energy_au = float(match.group(1))
-                        elif line.startswith(" Optimization complete"):
-                            state = LogParseState.SearchIr
+                            state = LogParseState.SearchGeometry
                     case LogParseState.SearchIr:
                         if line.startswith(" Harmonic frequencies (cm**-1)"):
                             state = LogParseState.ReadIr
