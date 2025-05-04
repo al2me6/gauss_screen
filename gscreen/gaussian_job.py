@@ -6,7 +6,7 @@ from typing import Self
 
 from gscreen.atom_coords import AtomCoords
 
-from .formula import PTABLE, MolecularFormula
+from gscreen.formula import PTABLE, MolecularFormula
 
 RE_SCRF_SOLVENT = re.compile(r"Solvent=([^,)]+)", re.IGNORECASE)
 RE_CHARGE_MULT = re.compile(r"^ Charge =\s+(-?\d+) Multiplicity =\s+(\d+)$")

@@ -2,7 +2,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from gscreen import GaussScreen
+from gscreen.gscreen import GaussScreen
 
 app = QApplication([])
 
