@@ -43,15 +43,29 @@ class GaussianJob:
     functional: str | None = None
     basis: str | None = None
     solvent: str | None = None
-    num_real_freq: int | None = None
-    num_imag_freq: int | None = None
-    elec_energy_au: float | None = None
+    vibrations: list[float] | None = None
+    _elec_energy_au: list[float] | None = None
     free_energy_au: float | None = None
-    coordinates: list[AtomCoords] | None = None
+    coordinates: list[list[AtomCoords]] | None = None
     success: bool | None = None
 
     def __hash__(self) -> int:
         return id(self)
+
+    def elec_energy_au(self) -> float | None:
+        if not self._elec_energy_au:
+            return None
+        return self._elec_energy_au[-1]
+
+    def num_real_freqs(self) -> int | None:
+        if not self.vibrations:
+            return None
+        return len([nu for nu in self.vibrations if nu > 0])
+
+    def num_imag_freqs(self) -> int | None:
+        if not self.vibrations:
+            return None
+        return len([nu for nu in self.vibrations if nu < 0])
 
     @staticmethod
     def _try_parse_functional_basis(keyword: str) -> tuple[str, str | None] | None:
@@ -131,12 +145,14 @@ class GaussianJob:
                             # Skip header.
                             for _ in range(4):
                                 log.readline()
-                            self.coordinates = []
+                            if not self.coordinates:
+                                self.coordinates = []
+                            self.coordinates.append([])
                             state = LogParseState.ReadGeometry
                     case LogParseState.ReadGeometry:
                         assert self.coordinates is not None
                         if match := RE_ATOM_COORDS.match(line):
-                            self.coordinates.append(
+                            self.coordinates[-1].append(
                                 AtomCoords(
                                     PTABLE.element(int(match.group(1))),
                                     *(float(match.group(i)) for i in [2, 3, 4]),
@@ -146,25 +162,22 @@ class GaussianJob:
                             state = LogParseState.SearchEE
                     case LogParseState.SearchEE:
                         if match := RE_ELEC_ENERGY.match(line):
-                            self.elec_energy_au = float(match.group(1))
+                            if not self._elec_energy_au:
+                                self._elec_energy_au = []
+                            self._elec_energy_au.append(float(match.group(1)))
                             state = LogParseState.SearchGeometry
                     case LogParseState.SearchIr:
                         if line.startswith(" Harmonic frequencies (cm**-1)"):
+                            self.vibrations = []
                             state = LogParseState.ReadIr
                     case LogParseState.ReadIr:
-                        if self.num_real_freq is None:
-                            self.num_real_freq = 0
-                        if self.num_imag_freq is None:
-                            self.num_imag_freq = 0
+                        assert self.vibrations is not None
                         if match := RE_IR_FREQ.match(line):
                             for g in match.groups():
-                                if not g:
-                                    continue
-                                if float(g) < 0:
-                                    self.num_imag_freq += 1
-                                else:
-                                    self.num_real_freq += 1
+                                if g:
+                                    self.vibrations.append(float(g))
                         if not line:
+                            self.vibrations.sort()
                             state = LogParseState.ReadFreeEnergy
                     case LogParseState.ReadFreeEnergy:
                         if match := RE_FREE_ENERGY.match(line):

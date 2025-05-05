@@ -103,11 +103,11 @@ class Column(IntEnum):
             case Column.Success:
                 return f"{job.success}" if job.success is not None else "Unknown"
             case Column.RealFreq:
-                return f"{job.num_real_freq}" if job.num_real_freq is not None else "N/A"
+                return n if (n := job.num_real_freqs()) is not None else "N/A"
             case Column.ImagFreq:
-                return f"{job.num_imag_freq}" if job.num_imag_freq is not None else "N/A"
+                return n if (n := job.num_imag_freqs()) is not None else "N/A"
             case Column.EHartree:
-                return f"{job.elec_energy_au:+.6f}" if job.elec_energy_au is not None else "N/A"
+                return f"{ee_au:+.6f}" if (ee_au := job.elec_energy_au()) is not None else "N/A"
             case Column.GHartree:
                 return f"{g_au:+.6f}" if g_au is not None else "N/A"
             case Column.GkJPerMol:
