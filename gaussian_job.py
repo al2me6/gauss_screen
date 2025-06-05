@@ -95,7 +95,7 @@ class GaussianJob:
                 if not line:
                     state = LogParseState.Terminated
                     continue
-                line = line.strip("\n")
+                line = line.rstrip("\n")
 
                 if line.startswith(" Error termination"):
                     self.success = False
@@ -105,7 +105,7 @@ class GaussianJob:
                 match state:
                     case LogParseState.SearchRoute:
                         if line.startswith(" #"):
-                            self.route.append(line.removeprefix(" #").strip())
+                            self.route.append(line.removeprefix(" #"))
                             state = LogParseState.ReadRoute
                     case LogParseState.ReadRoute:
                         if set(line.strip()) != {"-"}:
