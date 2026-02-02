@@ -203,7 +203,7 @@ class DataDirectory:
         if not self.dirs and len(self.jobs) == 1:
             return self
         elif len(self.dirs) == 1:
-            return self.dirs[0].try_collapse()
+            return self.dirs[0].try_collapse()  # type: ignore
         return None
 
     def len_recurse(self) -> int:
@@ -269,7 +269,7 @@ class DataDirectoryModel(QStandardItemModel):
         self.setHorizontalHeaderLabels([str(col) for col in COLUMNS])
         self.directory.build_model_recurse(self.invisibleRootItem(), self.checkbox_to_job)
 
-    @Slot(QStandardItem)  # type: ignore
+    @Slot(QStandardItem)
     def _checkbox_changed(self, item: QStandardItem):
         if item.column() != Column.Reference:
             return
